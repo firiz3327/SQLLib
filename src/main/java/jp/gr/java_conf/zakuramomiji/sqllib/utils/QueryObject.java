@@ -48,6 +48,7 @@ public abstract class QueryObject implements Cloneable {
             if (annotation != null) {
                 return annotation.value();
             }
+            throw new IllegalArgumentException("Please set a table for class or variable.");
         }
         return table;
     }
@@ -58,6 +59,7 @@ public abstract class QueryObject implements Cloneable {
             if (annotation != null) {
                 return annotation.value().toUpperCase();
             }
+            throw new IllegalArgumentException("Please set a table for class or variable.");
         }
         return table.toUpperCase();
     }
