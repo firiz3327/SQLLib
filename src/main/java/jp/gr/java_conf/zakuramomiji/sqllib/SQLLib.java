@@ -27,6 +27,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
@@ -65,6 +66,7 @@ public enum SQLLib {
         "password="
     };
     private final Logger logger = Logger.getLogger(SQLLib.class.getName());
+    private boolean debug = false;
     private String url;
     private String user;
     private String password;
@@ -90,6 +92,31 @@ public enum SQLLib {
      *
      */
     public void setup() throws IOException, SQLException {
+        setup(false);
+    }
+
+    /**
+     * Setup SQLLib
+     *
+     * <p>
+     * カレントディレクトリにdb.propertiesファイルが存在する場合は読み込み、
+     * 存在しない場合は、下記の設定のプロパティファイルを作成しSQLに接続します。
+     * </p>
+     *
+     * <ul>
+     * <li>{@code url=jdbc:mysql://localhost:3306/example}</li>
+     * <li>{@code user=root}</li>
+     * <li>{@code password=}</li>
+     * </ul>
+     *
+     * @param debug boolean : デバッグモード
+     * @throws java.io.IOException
+     * @throws java.sql.SQLException
+     * @since 2018-12-10 / firiz
+     *
+     */
+    public void setup(final boolean debug) throws IOException, SQLException {
+        this.debug = debug;
         final File file = new File("db.properties");
 
         //<editor-fold defaultstate="collapsed" desc="db.propertiesファイルの有無を確認後、読み込みもしくは作成">
@@ -127,11 +154,11 @@ public enum SQLLib {
     }
 
     //<editor-fold defaultstate="collapsed" desc="select methods">
-    public <T extends QueryObject> List<T> select(@NotNull final QueryObject obj) throws SQLException, IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException {
+    public <T extends QueryObject> List<T> select(@NotNull final T obj) throws SQLException, IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException {
         return select(obj, null);
     }
 
-    private <T extends QueryObject> List<T> select(@NotNull final QueryObject obj, final QueryObject parent) throws SQLException, IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException {
+    private <T extends QueryObject> List<T> select(@NotNull final T obj, final QueryObject parent) throws SQLException, IllegalAccessException, InstantiationException, InvocationTargetException, NoSuchMethodException {
         final Map<String, Select> selects = new LinkedHashMap<>();
         final Map<String, Table> tables = new LinkedHashMap<>();
         final Map<String, Sif> sifs = new LinkedHashMap<>();
@@ -275,7 +302,9 @@ public enum SQLLib {
             }
         }
 
-        System.out.println(query.toString());
+        if (debug) {
+            System.out.println(query.toString());
+        }
 
         final List objs = new ArrayList();
         try (final PreparedStatement ps = conn.prepareStatement(query.toString())) {
@@ -320,116 +349,150 @@ public enum SQLLib {
     //</editor-fold>
 
     //<editor-fold defaultstate="collapsed" desc="insert methods">
-    public PreparedStatement getInsertPreparedStatement(@NotNull final QueryObject obj) throws SQLException {
-        final StringBuilder query = new StringBuilder();
-        query.append("INSERT INTO ").append(obj.getTable()).append("(");
-
-        final List<Field> updateFields = new ArrayList<>();
-        final Field[] fields = obj.getClass().getDeclaredFields();
-        int j = 0;
-        for (int i = 0; i < fields.length; i++) {
-            final Field f = fields[i];
-            final Insert insert = f.getAnnotation(Insert.class);
-            if (insert != null) {
-                if (insert.update()) {
-                    updateFields.add(f);
-                }
-                query.append(i == 0 ? "" : ",").append(f.getName());
-                j++;
-            }
-        }
-        query.append(") VALUES (");
-        for (int i = 0; i < j; i++) {
-            query.append(i == 0 ? "?" : ",?");
-        }
-        query.append(")");
-        if (!updateFields.isEmpty()) {
-            query.append(" ON DUPLICATE KEY UPDATE ");
-            for (int i = 0; i < updateFields.size(); i++) {
-                final Field f = updateFields.get(i);
-                query.append(i == 0 ? "" : ",").append(f.getName()).append("=?");
-            }
-        }
-        return conn.prepareStatement(query.toString());
+    public void insert(@NotNull final List<QueryObject> objs) throws SQLException, IllegalArgumentException, IllegalAccessException {
+        insert(true, null, objs.toArray(new QueryObject[objs.size()]));
     }
 
-    @NotNull
-    public DoubleData<PreparedStatement, List<Object>> getInsertPreparedStatementAndValues(@NotNull final QueryObject obj) throws SQLException, IllegalAccessException {
-        final Map<String, DoubleData<Field, QueryObject>> lists = new LinkedHashMap<>();
-        final StringBuilder query = new StringBuilder();
-        query.append("INSERT INTO ").append(obj.getTable()).append("(");
+    public void insert(final boolean commit, @NotNull final List<QueryObject> objs) throws SQLException, IllegalArgumentException, IllegalAccessException {
+        insert(commit, null, objs.toArray(new QueryObject[objs.size()]));
+    }
 
-        final List<Object> values = new ArrayList<>();
-        final List<Field> updateFields = new ArrayList<>();
-        final Field[] fields = obj.getClass().getDeclaredFields();
-        int j = 0;
-        for (int i = 0; i < fields.length; i++) {
-            final Field f = fields[i];
-            if (f.getType() == List.class) {
-                f.setAccessible(true);
-                final String name = f.getName();
-                try {
-                    final Class type = (Class) ((ParameterizedType) f.getGenericType()).getActualTypeArguments()[0];
-                    final Constructor c = type.isMemberClass()
-                            ? type.getDeclaredConstructor(obj.getClass())
-                            : type.getDeclaredConstructor();
-                    lists.put(name, new DoubleData<>(f, (QueryObject) (type.isMemberClass() ? c.newInstance(obj) : c.newInstance())));
-                } catch (NoSuchMethodException | SecurityException | InstantiationException | IllegalArgumentException | InvocationTargetException ex) {
-                    log(Level.SEVERE, null, ex);
-                }
-            } else {
-                final Insert insert = f.getAnnotation(Insert.class);
-                if (insert != null) {
-                    if (insert.update()) {
-                        updateFields.add(f);
+    private void insert(final boolean commit, final DoubleData<TSame, List<Object>> tsame_datas, @NotNull final List<QueryObject> objs) throws SQLException, IllegalArgumentException, IllegalAccessException {
+        insert(commit, tsame_datas, objs.toArray(new QueryObject[objs.size()]));
+    }
+    
+    public void insert(@NotNull final QueryObject... objs) throws SQLException, IllegalArgumentException, IllegalAccessException {
+        insert(true, null, objs);
+    }
+
+    public void insert(final boolean commit, @NotNull final QueryObject... objs) throws SQLException, IllegalArgumentException, IllegalAccessException {
+        insert(commit, null, objs);
+    }
+
+    private void insert(final boolean commit, final DoubleData<TSame, List<Object>> tsame_datas, @NotNull final QueryObject... objs) throws SQLException, IllegalArgumentException, IllegalAccessException {
+        final Map<String, List<DoubleData<QueryObject, DoubleData<TSame, Object>>>> lists = new LinkedHashMap<>();
+        final StringBuilder query = new StringBuilder();
+        query.append("INSERT INTO ").append(objs[0].getTable()).append("(");
+
+        final List<List<Object>> values = new ArrayList<>();
+
+        boolean firstInto = true;
+        if (tsame_datas != null) {
+            query.append(firstInto ? "" : ",").append(tsame_datas.getLeft().column());
+            firstInto = false;
+        }
+        for (int l = 0; l < objs.length; l++) {
+            final List<Field> updateFields = new ArrayList<>();
+            final List<Object> v = new ArrayList<>();
+            if (tsame_datas != null) {
+                v.add(tsame_datas.getRight().get(l));
+            }
+
+            final QueryObject obj = objs[l];
+            final Field[] fields = obj.getClass().getDeclaredFields();
+            for (final Field f : fields) {
+                if (f.getType() == List.class) {
+                    f.setAccessible(true);
+                    final String name = f.getName();
+                    try {
+                        final Class type = (Class) ((ParameterizedType) f.getGenericType()).getActualTypeArguments()[0];
+                        final Constructor c = type.isMemberClass()
+                                ? type.getDeclaredConstructor(objs[0].getClass())
+                                : type.getDeclaredConstructor();
+                        final TSame ts = (TSame) type.getAnnotation(TSame.class);
+                        final List<DoubleData<QueryObject, DoubleData<TSame, Object>>> dds = new ArrayList<>();
+                        for (final QueryObject qo : (List<QueryObject>) f.get(obj)) {
+                            dds.add(new DoubleData<>(
+                                    qo,
+                                    ts == null ? null : new DoubleData<>(ts, obj.get(ts.origin()))
+                            ));
+                        }
+                        if (lists.containsKey(name)) {
+                            lists.get(name).addAll(dds);
+                        } else {
+                            lists.put(name, dds);
+                        }
+                    } catch (NoSuchMethodException | SecurityException | IllegalArgumentException ex) {
+                        log(Level.SEVERE, null, ex);
                     }
-                    query.append(i == 0 ? "" : ",").append(f.getName());
+                } else {
+                    final Insert insert = f.getAnnotation(Insert.class);
+                    if (insert != null) {
+                        if (insert.update()) {
+                            updateFields.add(f);
+                        }
+                        if (l == 0) {
+                            query.append(firstInto ? "" : ",").append(f.getName());
+                            firstInto = false;
+                        }
+
+                        f.setAccessible(true);
+                        v.add(f.get(obj));
+                    }
+                }
+            }
+            if (l == 0) {
+                query.append(") VALUES (");
+                for (int i = 0; i < v.size(); i++) {
+                    query.append(i == 0 ? "?" : ",?");
+                }
+                query.append(")");
+            }
+            if (!updateFields.isEmpty()) {
+                if (l == 0) {
+                    query.append(" ON DUPLICATE KEY UPDATE ");
+                }
+                for (int i = 0; i < updateFields.size(); i++) {
+                    final Field f = updateFields.get(i);
+                    if (l == 0) {
+                        query.append(i == 0 ? "" : ",").append(f.getName()).append("=?");
+                    }
 
                     f.setAccessible(true);
-                    values.add(f.get(obj));
-                    j++;
+                    v.add(f.get(obj));
                 }
             }
+            values.add(v);
         }
-        query.append(") VALUES (");
-        for (int i = 0; i < j; i++) {
-            query.append(i == 0 ? "?" : ",?");
+        System.out.println("values - " + values);
+        if (debug) {
+            System.out.println(query.toString());
         }
-        query.append(")");
-        if (!updateFields.isEmpty()) {
-            query.append(" ON DUPLICATE KEY UPDATE ");
-            for (int i = 0; i < updateFields.size(); i++) {
-                final Field f = updateFields.get(i);
-                query.append(i == 0 ? "" : ",").append(f.getName()).append("=?");
-
-                f.setAccessible(true);
-                values.add(f.get(obj));
+        try (final PreparedStatement ps = conn.prepareStatement(query.toString())) {
+            for (int i = 0; i < objs.length; i++) {
+                final QueryObject obj = objs[i];
+                if (objs[0].getClass() == obj.getClass()) {
+                    ps.clearParameters();
+                    final List<Object> vs = values.get(i);
+                    for (int j = 0; j < vs.size(); j++) {
+                        ps.setObject(j + 1, vs.get(j));
+                    }
+                    ps.addBatch();
+                } else {
+                    throw new IllegalArgumentException("All arguments should be of the same class.");
+                }
             }
+            ps.executeBatch();
         }
         for (final String column : lists.keySet()) {
-            final DoubleData<Field, QueryObject> ddata = lists.get(column);
-            ddata.getLeft().setAccessible(true);
-            ///////
+            final List<QueryObject> qos = new ArrayList<>();
+            final DoubleData<TSame, List<Object>> next_tsame_datas = new DoubleData<>(null, new ArrayList<>());
+            for (final DoubleData<QueryObject, DoubleData<TSame, Object>> dd : lists.get(column)) {
+                qos.add(dd.getLeft());
+                if (next_tsame_datas.getLeft() == null) {
+                    next_tsame_datas.setLeft(dd.getRight().getLeft());
+                }
+                next_tsame_datas.getRight().add(dd.getRight().getRight());
+            }
+            insert(
+                    false,
+                    next_tsame_datas,
+                    qos
+            );
         }
-        return new DoubleData<>(conn.prepareStatement(query.toString()), values);
-    }
-
-    @NotNull
-    public void insert(@NotNull final QueryObject obj) throws SQLException, IllegalAccessException {
-        final DoubleData<PreparedStatement, List<Object>> ips = getInsertPreparedStatementAndValues(obj);
-        final PreparedStatement ps = ips.getLeft();
-        try (ps) {
-            insert(obj, ps, ips.getRight());
+        if (commit) {
             conn.commit();
         }
-    }
-
-    @NotNull
-    public void insert(@NotNull final QueryObject obj, @NotNull final PreparedStatement ps, @NotNull final List<Object> values) throws SQLException {
-        for (int i = 0; i < values.size(); i++) {
-            ps.setObject(i + 1, values.get(i));
-        }
-        ps.executeUpdate();
     }
     //</editor-fold>
 

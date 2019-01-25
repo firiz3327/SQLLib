@@ -56,4 +56,9 @@ public class DoubleData<L, R> {
         this.right = right;
     }
     
+    @Override
+    public String toString() {
+        return "(" + left + ", " + right + ")";
+    }
+    
 }
