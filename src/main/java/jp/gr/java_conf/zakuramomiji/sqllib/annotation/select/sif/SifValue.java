@@ -35,14 +35,6 @@ public class SifValue {
     private final SifPipe pipe;
     private final String[] value;
 
-    public SifValue(@NotNull String column, @NotNull SifType type) {
-        this(column, type, SifPipe.AND, new String[0]);
-    }
-
-    public SifValue(@NotNull String column, @NotNull SifType type, @NotNull SifPipe pipe) {
-        this(column, type, pipe, new String[0]);
-    }
-
     public SifValue(@NotNull String column, @NotNull SifType type, @NotNull String value) {
         this(column, type, SifPipe.AND, new String[]{value});
     }
