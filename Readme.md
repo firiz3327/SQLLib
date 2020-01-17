@@ -1,6 +1,5 @@
 
-# this is garbage.
-# これはゴミです。
+# this is garbage. これはゴミです。
 
 ##### 筆跡時 ver0.2.0
 
