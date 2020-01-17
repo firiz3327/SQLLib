@@ -1,3 +1,7 @@
+
+# this is garbage.
+# これはゴミです。
+
 ##### 筆跡時 ver0.2.0
 
 Select 1.0
