@@ -1,5 +1,6 @@
 
-# this is garbage. これはゴミです。
+# Not currently updated
+# 現在更新していません
 
 ##### 筆跡時 ver0.2.0
 
